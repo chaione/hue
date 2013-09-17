@@ -1,5 +1,6 @@
 require 'net/http'
 require 'multi_json'
+require 'upnp/ssdp' rescue puts "You need to add this to your Gemfile:  \n\ngem 'upnp', :git => 'https://github.com/turboladen/upnp.git'"
 
 module Hue
   class Client
@@ -24,8 +25,12 @@ module Hue
     def bridges
       @bridges ||= begin
         bs = []
-        MultiJson.load(Net::HTTP.get(URI.parse('http://www.meethue.com/api/nupnp'))).each do |hash|
-          bs << Bridge.new(self, hash)
+        upnp_json = MultiJson.load(upnp_response)
+        upnp_json.each do |hash|
+          bridge = Bridge.new(self, hash)
+          bridge.ip = load_ip_from_sspd if bridge.ip.nil?
+          raise "Can't find bridge ip address from UPnP or SSDP" if bridge.ip.nil?
+          bs << bridge
         end
         bs
       end
@@ -54,6 +59,18 @@ module Hue
     end
 
   private
+
+    def load_ip_from_sspd
+      devices = UPnP::SSDP.search 'uuid:2f402f80-da50-11e1-9b23-0017880a6912'
+      if devices.any?
+        return devices.first[:location][/((\d+)\.){3}(\d+)/]
+      end
+      nil
+    end
+
+    def upnp_response
+      Net::HTTP.get(URI.parse('http://www.meethue.com/api/nupnp'))
+    end
 
     def validate_user
       response = MultiJson.load(Net::HTTP.get(URI.parse("http://#{bridge.ip}/api/#{@username}")))
